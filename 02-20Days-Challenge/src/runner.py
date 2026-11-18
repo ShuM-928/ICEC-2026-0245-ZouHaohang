@@ -72,12 +72,21 @@ class Runner:
         self.last_ms = 0.0
         self.last_logged = None
         self.day = datetime.date.today().isoformat()
+        self.unc_dir = LOGS / "uncertain"
+        self.unc_dir.mkdir(exist_ok=True)
+        self.n_unc = 0
+        self.last_unc = 0.0
 
-        name = load_conf().get("camera_name") or ""
+        conf = load_conf()
+        name = conf.get("camera_name") or ""
         real = [n for n, v in list_devices() if not v]
-        if name not in real:
+        usb = [n for n in real if "icspring" in n.lower()]
+        if usb:
+            name = usb[0]
+        elif name not in real:
             name = real[0] if real else ""
         self.cam = Cam(name) if name else None
+        self.cam_name = name
 
         root.title("项目二 · 连续检测运行器")
         root.configure(bg="#111")
@@ -101,6 +110,12 @@ class Runner:
         self.lb_cnt.place(x=16, y=160)
         self.lb_fa = tk.Label(panel, text="", bg="#111", fg="#DDD", font=("微软雅黑", 11))
         self.lb_fa.place(x=16, y=188)
+        self.lb_time = tk.Label(panel, text="已运行 00:00", bg="#111", fg="#777", font=("微软雅黑", 9))
+        self.lb_time.place(x=16, y=212)
+        self.lb_unc = tk.Label(panel, text="低置信度截图 0", bg="#111", fg="#777", font=("微软雅黑", 9))
+        self.lb_unc.place(x=16, y=234)
+        self.lb_dev = tk.Label(panel, text=f"设备：{self.cam_name}", bg="#111", fg="#555", font=("微软雅黑", 8))
+        self.lb_dev.place(x=16, y=256)
 
         tk.Button(panel, text="标记误报  (F)", command=self.mark_fa, bg="#7F1D1D", fg="#FFD7D7",
                   bd=0, font=("微软雅黑", 11), takefocus=0).place(x=16, y=230, width=280)
@@ -108,7 +123,7 @@ class Runner:
                            font=("Consolas", 8), state="disabled")
         self.txt.place(x=16, y=280)
 
-        tk.Label(panel, text="日志：logs/detect_*.csv\n误报：logs/fa_*.csv\nEsc 退出",
+        tk.Label(panel, text="日志 logs/detect_*.csv\n低置信截图 logs/uncertain/\nEsc 退出",
                  bg="#111", fg="#666", font=("微软雅黑", 8), justify="left").place(x=16, y=486)
 
         root.bind_all("<Key-f>", lambda e: (self.mark_fa(), "break")[1])
@@ -141,7 +156,10 @@ class Runner:
             self.last = CLASSES[i]
             self.last_conf = float(prob[i])
             self.count += 1
-            self.lb_cls.config(text=f"{self.last}  {CN[self.last]}")
+            if self.last_conf < 0.6:
+                self.lb_cls.config(text=f"未知  (可能是 {CN[self.last]})")
+            else:
+                self.lb_cls.config(text=f"{self.last}  {CN[self.last]}")
             self.lb_conf.config(text=f"置信度 {self.last_conf:.3f}")
             self.lb_ms.config(text=f"推理 {self.last_ms:.1f} ms")
             self.lb_cnt.config(text=f"累计检测 {self.count}")
@@ -156,12 +174,43 @@ class Runner:
             self.canvas.delete("all")
             self.canvas.create_image(0, 0, image=self.photo, anchor="nw")
 
+            self.check_uncertain(img)
+
+            el = int(time.time() - self.t0)
+            self.lb_time.config(text=f"已运行 {el//3600:02d}:{el%3600//60:02d}:{el%60:02d}")
+
             now = time.time()
             if now >= self.next_log:
                 self.next_log = now + 2.0
                 self.write_row()
 
         self.root.after(120, self.loop)
+
+    def check_uncertain(self, img):
+        """置信度低于 0.6 时自动截图存档，每 20 秒最多一张。"""
+        if self.last_conf >= 0.6:
+            return
+        now = time.time()
+        if now - self.last_unc < 20:
+            return
+        self.last_unc = now
+        ts = datetime.datetime.now()
+        fn = self.unc_dir / f"{ts:%Y%m%d_%H%M%S}_{self.last}_{self.last_conf:.2f}.jpg"
+        try:
+            img.save(fn, "JPEG", quality=85)
+        except Exception:
+            return
+        f = LOGS / f"uncertain_{ts.date().isoformat()}.csv"
+        new = not f.exists()
+        with f.open("a", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            if new:
+                w.writerow(["ts", "pred", "conf", "ms", "file"])
+            w.writerow([ts.strftime("%Y-%m-%d %H:%M:%S"), self.last, f"{self.last_conf:.4f}",
+                        f"{self.last_ms:.2f}", fn.name])
+        self.n_unc += 1
+        self.lb_unc.config(text=f"低置信度截图 {self.n_unc}")
+        self.log(f"低置信 {self.last} {self.last_conf:.2f} → {fn.name}")
 
     def write_row(self):
         if self.last is None:
@@ -172,8 +221,9 @@ class Runner:
         with det.open("a", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
             if new:
-                w.writerow(["ts", "pred", "conf", "ms"])
-            w.writerow([ts, self.last, f"{self.last_conf:.4f}", f"{self.last_ms:.2f}"])
+                w.writerow(["ts", "pred", "conf", "ms", "reject"])
+            w.writerow([ts, self.last, f"{self.last_conf:.4f}", f"{self.last_ms:.2f}",
+                        1 if self.last_conf < 0.6 else 0])
         self.last_logged = (ts, self.last, self.last_conf)
 
     def mark_fa(self):
