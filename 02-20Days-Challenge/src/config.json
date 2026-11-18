@@ -1,0 +1,47 @@
+{
+  "per_cell": 12,
+  "empty_per_lighting": 5,
+  "camera_name": "icspring camera",
+  "lights": [
+    {
+      "code": "L1",
+      "name": "均匀顶光"
+    },
+    {
+      "code": "L2",
+      "name": "弱光"
+    },
+    {
+      "code": "L3",
+      "name": "强反光"
+    },
+    {
+      "code": "L4",
+      "name": "阴影遮挡"
+    }
+  ],
+  "objects": [
+    {
+      "code": "O1",
+      "name": "白色按压瓶"
+    },
+    {
+      "code": "O2",
+      "name": "深色充电宝"
+    },
+    {
+      "code": "O3",
+      "name": "金属钥匙"
+    },
+    {
+      "code": "O4",
+      "name": "透明玻璃瓶"
+    },
+    {
+      "code": "O5",
+      "name": "亮面包装盒"
+    }
+  ],
+  "empty_name": "空桌面",
+  "camera_index": 0
+}
